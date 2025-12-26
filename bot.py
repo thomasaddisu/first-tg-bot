@@ -5,7 +5,7 @@ from aiogram.types import Message
 import os
 
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = 8234011884
+ADMIN_ID = 1003587825401
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
