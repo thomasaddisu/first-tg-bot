@@ -3,11 +3,15 @@ import os
 import json
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import (
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery,
+    BotCommand
+)
 
-# =========================
-# ENV (Railway Safe)
-# =========================
+# ================= ENV =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID"))
@@ -16,18 +20,15 @@ PUBLIC_CHANNEL_ID = int(os.getenv("PUBLIC_CHANNEL_ID"))
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# =========================
-# FILES
-# =========================
+# ================= FILES =================
 PROFILE_FILE = "profiles.json"
 COUNTER_FILE = "counter.txt"
 
 CONFESS_MODE = set()
 SETNAME_MODE = set()
+SETBIO_MODE = set()
 
-# =========================
-# UTILS
-# =========================
+# ================= UTILS =================
 def load_profiles():
     if not os.path.exists(PROFILE_FILE):
         return {}
@@ -45,10 +46,10 @@ def get_profile(user_id):
     if uid not in profiles:
         profiles[uid] = {
             "name": "Not set",
+            "bio": "No bio set",
             "aura": 0,
             "followers": 0,
-            "following": 0,
-            "bio": "No bio set"
+            "following": 0
         }
         save_profiles(profiles)
 
@@ -59,75 +60,29 @@ def update_profile(user_id, key, value):
     profiles[str(user_id)][key] = value
     save_profiles(profiles)
 
-def confession_count():
-    if not os.path.exists(COUNTER_FILE):
-        return 0
-    with open(COUNTER_FILE, "r") as f:
-        return int(f.read())
-
 def increase_counter():
-    count = confession_count() + 1
+    count = 1
+    if os.path.exists(COUNTER_FILE):
+        with open(COUNTER_FILE, "r") as f:
+            count = int(f.read()) + 1
     with open(COUNTER_FILE, "w") as f:
         f.write(str(count))
     return count
 
-# =========================
-# START
-# =========================
+# ================= START =================
 @dp.message(Command("start"))
 async def start(message: Message):
     await message.answer(
         "👋 Welcome to XConfession Bot\n\n"
         "Send confessions anonymously.\n"
-        "All confessions are reviewed before posting.\n\n"
-        "Use /help to see commands."
+        "Admins review before posting.\n\n"
+        "Use the menu ⬇️"
     )
 
-# =========================
-# HELP
-# =========================
-@dp.message(Command("help"))
-async def help_cmd(message: Message):
-    await message.answer(
-        "/confess – Submit confession\n"
-        "/profile – View profile\n"
-        "/setname – Set custom name\n"
-        "/rules – View rules\n"
-        "/privacy – Privacy info\n"
-        "/cancel – Cancel action"
-    )
-
-# =========================
-# RULES
-# =========================
-@dp.message(Command("rules"))
-async def rules(message: Message):
-    await message.answer(
-        "📜 Rules\n\n"
-        "• No names\n"
-        "• No hate\n"
-        "• Be respectful"
-    )
-
-# =========================
-# PRIVACY
-# =========================
-@dp.message(Command("privacy"))
-async def privacy(message: Message):
-    await message.answer(
-        "🔐 Privacy\n\n"
-        "• Confessions are anonymous\n"
-        "• No personal data is shared\n"
-        "• Admins cannot see sender"
-    )
-
-# =========================
-# PROFILE
-# =========================
+# ================= PROFILE =================
 @dp.message(Command("profile"))
 async def profile(message: Message):
     p = get_profile(message.from_user.id)
-
     await message.answer(
         f"{p['name']}\n\n"
         f"⚡ Aura: {p['aura']}\n"
@@ -135,62 +90,73 @@ async def profile(message: Message):
         f"{p['bio']}"
     )
 
-# =========================
-# SET NAME
-# =========================
+# ================= SET NAME =================
 @dp.message(Command("setname"))
 async def setname(message: Message):
     SETNAME_MODE.add(message.from_user.id)
-    await message.answer("✍️ Send the name you want to use.")
+    await message.answer("✍️ Send your new name")
 
-@dp.message(F.from_user.id.in_(lambda: SETNAME_MODE))
-async def receive_name(message: Message):
-    name = message.text.strip()[:20]
-    update_profile(message.from_user.id, "name", name)
-    SETNAME_MODE.remove(message.from_user.id)
-    await message.answer(f"✅ Name set to: {name}")
+# ================= SET BIO =================
+@dp.message(Command("setbio"))
+async def setbio(message: Message):
+    SETBIO_MODE.add(message.from_user.id)
+    await message.answer("📝 Send your bio")
 
-# =========================
-# CONFESS
-# =========================
+# ================= CONFESS =================
 @dp.message(Command("confess"))
 async def confess(message: Message):
     CONFESS_MODE.add(message.from_user.id)
-    await message.answer("📝 Send your confession now.")
+    await message.answer("📝 Send your confession")
 
-@dp.message(F.from_user.id.in_(lambda: CONFESS_MODE))
-async def receive_confession(message: Message):
-    CONFESS_MODE.remove(message.from_user.id)
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Approve", callback_data="approve"),
-                InlineKeyboardButton(text="❌ Reject", callback_data="reject")
-            ]
-        ]
-    )
-
-    await bot.send_message(
-        ADMIN_CHANNEL_ID,
-        f"📩 New Confession:\n\n{message.text}",
-        reply_markup=keyboard
-    )
-
-    await message.answer("✅ Confession sent for review.")
-
-# =========================
-# CANCEL
-# =========================
+# ================= CANCEL =================
 @dp.message(Command("cancel"))
 async def cancel(message: Message):
     CONFESS_MODE.discard(message.from_user.id)
     SETNAME_MODE.discard(message.from_user.id)
-    await message.answer("❌ Action cancelled.")
+    SETBIO_MODE.discard(message.from_user.id)
+    await message.answer("❌ Action cancelled")
 
-# =========================
-# ADMIN ACTIONS
-# =========================
+# ================= TEXT HANDLER =================
+@dp.message(F.text)
+async def text_handler(message: Message):
+    uid = message.from_user.id
+
+    if uid in SETNAME_MODE:
+        update_profile(uid, "name", message.text[:20])
+        SETNAME_MODE.remove(uid)
+        await message.answer("✅ Name updated")
+        return
+
+    if uid in SETBIO_MODE:
+        update_profile(uid, "bio", message.text[:80])
+        SETBIO_MODE.remove(uid)
+        await message.answer("✅ Bio updated")
+        return
+
+    if uid in CONFESS_MODE:
+        CONFESS_MODE.remove(uid)
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="✅ Approve", callback_data="approve"),
+                    InlineKeyboardButton(text="❌ Reject", callback_data="reject")
+                ]
+            ]
+        )
+
+        await bot.send_message(
+            ADMIN_CHANNEL_ID,
+            f"📩 New Confession:\n\n{message.text}",
+            reply_markup=keyboard
+        )
+
+        await message.answer("✅ Confession sent for review")
+        return
+
+    await message.answer("❗ Use the menu to interact")
+
+# ================= ADMIN =================
 @dp.callback_query(F.data == "approve")
 async def approve(callback: CallbackQuery):
     text = callback.message.text.replace("📩 New Confession:\n\n", "")
@@ -202,7 +168,7 @@ async def approve(callback: CallbackQuery):
     )
 
     await callback.message.edit_text(
-        callback.message.text + f"\n\n✅ Approved as #{number}"
+        callback.message.text + f"\n\n✅ Approved #{number}"
     )
     await callback.answer("Posted")
 
@@ -213,10 +179,21 @@ async def reject(callback: CallbackQuery):
     )
     await callback.answer("Rejected")
 
-# =========================
-# RUN
-# =========================
+# ================= COMMAND MENU =================
+async def setup_commands():
+    commands = [
+        BotCommand(command="start", description="Start bot"),
+        BotCommand(command="confess", description="Submit confession"),
+        BotCommand(command="profile", description="View profile"),
+        BotCommand(command="setname", description="Set name"),
+        BotCommand(command="setbio", description="Set bio"),
+        BotCommand(command="cancel", description="Cancel action"),
+    ]
+    await bot.set_my_commands(commands)
+
+# ================= RUN =================
 async def main():
+    await setup_commands()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
