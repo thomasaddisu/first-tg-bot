@@ -2,23 +2,18 @@ import asyncio
 import os
 import json
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart
-from aiogram.types import (
-    Message,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    CallbackQuery
-)
+from aiogram.filters import Command
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 # =========================
-# ENV VARIABLES (Railway)
+# ENV (Railway Safe)
 # =========================
-TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID"))
 PUBLIC_CHANNEL_ID = int(os.getenv("PUBLIC_CHANNEL_ID"))
 
-bot = Bot(token=TOKEN)
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # =========================
@@ -27,7 +22,8 @@ dp = Dispatcher()
 PROFILE_FILE = "profiles.json"
 COUNTER_FILE = "counter.txt"
 
-SET_NAME_MODE = set()
+CONFESS_MODE = set()
+SETNAME_MODE = set()
 
 # =========================
 # UTILS
@@ -35,11 +31,11 @@ SET_NAME_MODE = set()
 def load_profiles():
     if not os.path.exists(PROFILE_FILE):
         return {}
-    with open(PROFILE_FILE, "r", encoding="utf-8") as f:
+    with open(PROFILE_FILE, "r") as f:
         return json.load(f)
 
 def save_profiles(data):
-    with open(PROFILE_FILE, "w", encoding="utf-8") as f:
+    with open(PROFILE_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
 def get_profile(user_id):
@@ -63,14 +59,14 @@ def update_profile(user_id, key, value):
     profiles[str(user_id)][key] = value
     save_profiles(profiles)
 
-def get_counter():
+def confession_count():
     if not os.path.exists(COUNTER_FILE):
         return 0
     with open(COUNTER_FILE, "r") as f:
         return int(f.read())
 
 def increase_counter():
-    count = get_counter() + 1
+    count = confession_count() + 1
     with open(COUNTER_FILE, "w") as f:
         f.write(str(count))
     return count
@@ -78,60 +74,94 @@ def increase_counter():
 # =========================
 # START
 # =========================
-@dp.message(CommandStart())
-async def start_handler(message: Message):
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🧑 My Profile", callback_data="profile")]
-        ]
-    )
-
+@dp.message(Command("start"))
+async def start(message: Message):
     await message.answer(
         "👋 Welcome to XConfession Bot\n\n"
-        "Send your confession anonymously.\n"
-        "Admins will review before posting.\n\n"
-        "Use /setname to choose your name.",
-        reply_markup=keyboard
+        "Send confessions anonymously.\n"
+        "All confessions are reviewed before posting.\n\n"
+        "Use /help to see commands."
     )
 
 # =========================
-# PROFILE VIEW
+# HELP
 # =========================
-@dp.callback_query(F.data == "profile")
-async def profile_view(callback: CallbackQuery):
-    profile = get_profile(callback.from_user.id)
-
-    await callback.message.answer(
-        f"{profile['name']}\n\n"
-        f"⚡ Aura: {profile['aura']}\n"
-        f"👥 Followers: {profile['followers']} | Following: {profile['following']}\n\n"
-        f"{profile['bio']}"
+@dp.message(Command("help"))
+async def help_cmd(message: Message):
+    await message.answer(
+        "/confess – Submit confession\n"
+        "/profile – View profile\n"
+        "/setname – Set custom name\n"
+        "/rules – View rules\n"
+        "/privacy – Privacy info\n"
+        "/cancel – Cancel action"
     )
 
-    await callback.answer()
+# =========================
+# RULES
+# =========================
+@dp.message(Command("rules"))
+async def rules(message: Message):
+    await message.answer(
+        "📜 Rules\n\n"
+        "• No names\n"
+        "• No hate\n"
+        "• Be respectful"
+    )
 
 # =========================
-# SET NAME FLOW (FIXED)
+# PRIVACY
 # =========================
-@dp.message(F.text == "/setname")
-async def setname_start(message: Message):
-    SET_NAME_MODE.add(message.from_user.id)
-    await message.answer("✍️ Send the name you want to use (max 20 characters).")
+@dp.message(Command("privacy"))
+async def privacy(message: Message):
+    await message.answer(
+        "🔐 Privacy\n\n"
+        "• Confessions are anonymous\n"
+        "• No personal data is shared\n"
+        "• Admins cannot see sender"
+    )
 
-@dp.message(F.from_user.id.in_(lambda: SET_NAME_MODE))
+# =========================
+# PROFILE
+# =========================
+@dp.message(Command("profile"))
+async def profile(message: Message):
+    p = get_profile(message.from_user.id)
+
+    await message.answer(
+        f"{p['name']}\n\n"
+        f"⚡ Aura: {p['aura']}\n"
+        f"👥 Followers: {p['followers']} | Following: {p['following']}\n\n"
+        f"{p['bio']}"
+    )
+
+# =========================
+# SET NAME
+# =========================
+@dp.message(Command("setname"))
+async def setname(message: Message):
+    SETNAME_MODE.add(message.from_user.id)
+    await message.answer("✍️ Send the name you want to use.")
+
+@dp.message(F.from_user.id.in_(lambda: SETNAME_MODE))
 async def receive_name(message: Message):
     name = message.text.strip()[:20]
-
     update_profile(message.from_user.id, "name", name)
-    SET_NAME_MODE.remove(message.from_user.id)
-
-    await message.answer(f"✅ Your name has been set to: {name}")
+    SETNAME_MODE.remove(message.from_user.id)
+    await message.answer(f"✅ Name set to: {name}")
 
 # =========================
-# CONFESSION HANDLER
+# CONFESS
 # =========================
-@dp.message(F.text & ~F.text.startswith("/") & ~F.from_user.id.in_(lambda: SET_NAME_MODE))
-async def confession_handler(message: Message):
+@dp.message(Command("confess"))
+async def confess(message: Message):
+    CONFESS_MODE.add(message.from_user.id)
+    await message.answer("📝 Send your confession now.")
+
+@dp.message(F.from_user.id.in_(lambda: CONFESS_MODE))
+async def receive_confession(message: Message):
+    CONFESS_MODE.remove(message.from_user.id)
+
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -150,36 +180,38 @@ async def confession_handler(message: Message):
     await message.answer("✅ Confession sent for review.")
 
 # =========================
-# APPROVE CONFESSION
+# CANCEL
+# =========================
+@dp.message(Command("cancel"))
+async def cancel(message: Message):
+    CONFESS_MODE.discard(message.from_user.id)
+    SETNAME_MODE.discard(message.from_user.id)
+    await message.answer("❌ Action cancelled.")
+
+# =========================
+# ADMIN ACTIONS
 # =========================
 @dp.callback_query(F.data == "approve")
-async def approve_confession(callback: CallbackQuery):
+async def approve(callback: CallbackQuery):
     text = callback.message.text.replace("📩 New Confession:\n\n", "")
-    confession_number = increase_counter()
+    number = increase_counter()
 
     await bot.send_message(
         PUBLIC_CHANNEL_ID,
-        f"📝 Anonymous Confession #{confession_number}\n\n{text}"
+        f"📝 Anonymous Confession #{number}\n\n{text}"
     )
-
-    # Aura reward
-    profile = get_profile(ADMIN_ID)
-    profile["aura"] += 1
-    update_profile(ADMIN_ID, "aura", profile["aura"])
 
     await callback.message.edit_text(
-        callback.message.text + f"\n\n✅ Approved as Confession #{confession_number}"
+        callback.message.text + f"\n\n✅ Approved as #{number}"
     )
+    await callback.answer("Posted")
 
-    await callback.answer("Posted to public channel")
-
-# =========================
-# REJECT CONFESSION
-# =========================
 @dp.callback_query(F.data == "reject")
-async def reject_confession(callback: CallbackQuery):
-    await callback.message.edit_text(callback.message.text + "\n\n❌ Rejected")
-    await callback.answer("Confession rejected")
+async def reject(callback: CallbackQuery):
+    await callback.message.edit_text(
+        callback.message.text + "\n\n❌ Rejected"
+    )
+    await callback.answer("Rejected")
 
 # =========================
 # RUN
