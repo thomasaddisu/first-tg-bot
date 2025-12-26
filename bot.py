@@ -10,79 +10,120 @@ from aiogram.types import (
     CallbackQuery
 )
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
-ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID"))
-PUBLIC_CHANNEL_ID = int(os.getenv("PUBLIC_CHANNEL_ID"))
+# ================= ENV SAFETY =================
+def must_env(name):
+    value = os.getenv(name)
+    if value is None:
+        raise RuntimeError(f"Missing environment variable: {name}")
+    return value
+
+BOT_TOKEN = must_env("BOT_TOKEN")
+ADMIN_ID = int(must_env("ADMIN_ID"))
+ADMIN_CHANNEL_ID = int(must_env("ADMIN_CHANNEL_ID"))
+PUBLIC_CHANNEL_ID = int(must_env("PUBLIC_CHANNEL_ID"))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# ================= FILES =================
 PROFILE_FILE = "profiles.json"
 COUNTER_FILE = "counter.txt"
 
-def load_json(file, default):
-    if not os.path.exists(file):
-        return default
-    with open(file, "r", encoding="utf-8") as f:
+# ================= UTILITIES =================
+def load_profiles():
+    if not os.path.exists(PROFILE_FILE):
+        return {}
+    with open(PROFILE_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
-def save_json(file, data):
-    with open(file, "w", encoding="utf-8") as f:
+def save_profiles(data):
+    with open(PROFILE_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
-def get_profile(user):
-    profiles = load_json(PROFILE_FILE, {})
-    uid = str(user.id)
+def get_profile(user_id):
+    profiles = load_profiles()
+    uid = str(user_id)
 
     if uid not in profiles:
         profiles[uid] = {
-            "name": user.first_name or "Anonymous",
+            "name": "Not set",
             "aura": 0,
             "followers": 0,
             "following": 0,
             "bio": "No bio set"
         }
-        save_json(PROFILE_FILE, profiles)
+        save_profiles(profiles)
 
     return profiles[uid]
 
+def update_profile(user_id, key, value):
+    profiles = load_profiles()
+    profiles[str(user_id)][key] = value
+    save_profiles(profiles)
+
+def get_counter():
+    if not os.path.exists(COUNTER_FILE):
+        return 0
+    with open(COUNTER_FILE) as f:
+        return int(f.read())
+
 def increase_counter():
-    count = int(open(COUNTER_FILE).read()) if os.path.exists(COUNTER_FILE) else 0
-    count += 1
+    count = get_counter() + 1
     with open(COUNTER_FILE, "w") as f:
         f.write(str(count))
     return count
 
+# ================= START =================
 @dp.message(CommandStart())
-async def start(message: Message):
-    kb = InlineKeyboardMarkup(
+async def start_handler(message: Message):
+    keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🧑 My Profile", callback_data="profile")]
+            [InlineKeyboardButton(text="👤 My Profile", callback_data="profile")]
         ]
     )
+
     await message.answer(
-        "Welcome 👋\n\nSend your confession anonymously.",
-        reply_markup=kb
+        "👋 Welcome to XConfession Bot\n\n"
+        "Send your confession anonymously.\n"
+        "Admins will review before posting.\n\n"
+        "Use /setname to choose your name.",
+        reply_markup=keyboard
     )
 
+# ================= PROFILE VIEW =================
 @dp.callback_query(F.data == "profile")
-async def profile(callback: CallbackQuery):
-    p = get_profile(callback.from_user)
+async def profile_callback(callback: CallbackQuery):
+    profile = get_profile(callback.from_user.id)
+
     await callback.message.answer(
-        f"{p['name']}\n\n"
-        f"⚡ Aura: {p['aura']}\n"
-        f"👥 Followers: {p['followers']} | Following: {p['following']}\n\n"
-        f"{p['bio']}"
+        f"{profile['name']}\n\n"
+        f"⚡ Aura: {profile['aura']}\n"
+        f"👥 Followers: {profile['followers']} | Following: {profile['following']}\n\n"
+        f"{profile['bio']}"
     )
     await callback.answer()
 
-@dp.message(F.text)
-async def confession(message: Message):
-    kb = InlineKeyboardMarkup(
+# ================= SET NAME =================
+@dp.message(F.text.startswith("/setname"))
+async def set_name(message: Message):
+    parts = message.text.split(maxsplit=1)
+
+    if len(parts) < 2:
+        await message.answer("❌ Usage: /setname YourName")
+        return
+
+    name = parts[1][:20]
+    update_profile(message.from_user.id, "name", name)
+
+    await message.answer(f"✅ Your name is set to: {name}")
+
+# ================= CONFESSION =================
+@dp.message(F.text & ~F.text.startswith("/"))
+async def confession_handler(message: Message):
+    keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ Approve", callback_data=f"approve:{message.from_user.id}:{message.text}"),
+                InlineKeyboardButton(text="✅ Approve", callback_data=f"approve:{message.from_user.id}"),
                 InlineKeyboardButton(text="❌ Reject", callback_data="reject")
             ]
         ]
@@ -91,34 +132,39 @@ async def confession(message: Message):
     await bot.send_message(
         ADMIN_CHANNEL_ID,
         f"📩 New Confession:\n\n{message.text}",
-        reply_markup=kb
+        reply_markup=keyboard
     )
 
-    await message.answer("✅ Your confession was sent for review.")
+    await message.answer("✅ Confession sent for review.")
 
+# ================= APPROVE =================
 @dp.callback_query(F.data.startswith("approve"))
-async def approve(callback: CallbackQuery):
-    _, user_id, text = callback.data.split(":", 2)
+async def approve_handler(callback: CallbackQuery):
+    user_id = callback.data.split(":")[1]
+    confession_text = callback.message.text.replace("📩 New Confession:\n\n", "")
     confession_number = increase_counter()
 
     await bot.send_message(
         PUBLIC_CHANNEL_ID,
-        f"📝 Confession #{confession_number}\n\n{text}"
+        f"📝 Anonymous Confession #{confession_number}\n\n{confession_text}"
     )
 
-    profiles = load_json(PROFILE_FILE, {})
-    if user_id in profiles:
-        profiles[user_id]["aura"] += 1
-        save_json(PROFILE_FILE, profiles)
+    profiles = load_profiles()
+    profiles[user_id]["aura"] += 1
+    save_profiles(profiles)
 
-    await callback.message.edit_text("✅ Approved & Posted")
-    await callback.answer()
+    await callback.message.edit_text(
+        callback.message.text + f"\n\n✅ Approved as Confession #{confession_number}"
+    )
+    await callback.answer("Posted")
 
+# ================= REJECT =================
 @dp.callback_query(F.data == "reject")
-async def reject(callback: CallbackQuery):
-    await callback.message.edit_text("❌ Rejected")
-    await callback.answer()
+async def reject_handler(callback: CallbackQuery):
+    await callback.message.edit_text(callback.message.text + "\n\n❌ Rejected")
+    await callback.answer("Rejected")
 
+# ================= MAIN =================
 async def main():
     await dp.start_polling(bot)
 
