@@ -7,14 +7,15 @@ from aiogram.types import (
     Message,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    CallbackQuery
+    CallbackQuery,
+    ReplyKeyboardMarkup,
+    KeyboardButton
 )
 
-# ===================== CONFIG =====================
-
-TOKEN = os.getenv("BOT_TOKEN")  # MUST be set in environment
-ADMIN_CHANNEL_ID = -1003587825401
-PUBLIC_CHANNEL_ID = -1003682833315
+# ================= CONFIG =================
+TOKEN = os.getenv("BOT_TOKEN")  # set this in environment
+ADMIN_CHANNEL_ID = -1003587825401     # admin review channel
+PUBLIC_CHANNEL_ID = -1003682833315    # public confession channel
 
 PROFILE_FILE = "profiles.json"
 COUNTER_FILE = "counter.txt"
@@ -22,8 +23,7 @@ COUNTER_FILE = "counter.txt"
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# ===================== PROFILE SYSTEM =====================
-
+# ================= UTILITIES =================
 def load_profiles():
     if not os.path.exists(PROFILE_FILE):
         return {}
@@ -34,13 +34,13 @@ def save_profiles(data):
     with open(PROFILE_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
-def get_profile(user_id, username):
+def get_profile(user_id, name):
     profiles = load_profiles()
     uid = str(user_id)
 
     if uid not in profiles:
         profiles[uid] = {
-            "name": username or "Anonymous",
+            "name": name or "Anonymous",
             "aura": 0,
             "followers": 0,
             "following": 0,
@@ -49,18 +49,6 @@ def get_profile(user_id, username):
         save_profiles(profiles)
 
     return profiles[uid]
-
-def increase_aura(user_id):
-    profiles = load_profiles()
-    uid = str(user_id)
-    if uid in profiles:
-        profiles[uid]["aura"] += 1
-        save_profiles(profiles)
-
-def calculate_score(profile):
-    return (profile["aura"] * 3) + (profile["followers"] * 2)
-
-# ===================== CONFESSION COUNTER =====================
 
 def get_counter():
     if not os.path.exists(COUNTER_FILE):
@@ -74,64 +62,56 @@ def increase_counter():
         f.write(str(count))
     return count
 
-# ===================== COMMANDS =====================
-
-@dp.message(CommandStart())
-async def start_handler(message: Message):
-    get_profile(message.from_user.id, message.from_user.first_name)
-    await message.answer(
-        "Welcome 👋\n\n"
-        "Send your confession anonymously.\n"
-        "It will be reviewed before posting."
+# ================= UI =================
+def main_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🧑 My Profile")],
+            [KeyboardButton(text="✍️ Send Confession")]
+        ],
+        resize_keyboard=True
     )
 
-@dp.message(F.text == "/profile")
+# ================= HANDLERS =================
+@dp.message(CommandStart())
+async def start_handler(message: Message):
+    await message.answer(
+        "Welcome 👋\n\n"
+        "This is an anonymous confession bot.\n"
+        "Choose an option below 👇",
+        reply_markup=main_menu()
+    )
+
+@dp.message(F.text == "🧑 My Profile")
 async def profile_handler(message: Message):
     profile = get_profile(message.from_user.id, message.from_user.first_name)
-    score = calculate_score(profile)
 
     await message.answer(
         f"{profile['name']}\n\n"
-        f"⚡ Aura: {profile['aura']}\n"
-        f"👥 Followers: {profile['followers']} | Following: {profile['following']}\n"
-        f"⭐ Score: {score}\n\n"
-        f"{profile['bio']}"
+        f"⚡︎ Aura: {profile['aura']}\n"
+        f"👥 Followers: {profile['followers']} | Following: {profile['following']}\n\n"
+        f"{profile['bio']}",
+        reply_markup=main_menu()
     )
 
-@dp.message(F.text == "/rank")
-async def rank_handler(message: Message):
-    profiles = load_profiles()
+@dp.message(F.text == "✍️ Send Confession")
+async def send_confession_hint(message: Message):
+    await message.answer(
+        "✍️ Send your confession now.\n"
+        "It will be reviewed before posting.",
+        reply_markup=main_menu()
+    )
 
-    if not profiles:
-        await message.answer("No users ranked yet.")
-        return
-
-    ranked = []
-    for profile in profiles.values():
-        ranked.append((profile["name"], profile["aura"], profile["followers"], calculate_score(profile)))
-
-    ranked.sort(key=lambda x: x[3], reverse=True)
-
-    text = "🏆 Top Contributors\n\n"
-    for i, (name, aura, followers, score) in enumerate(ranked[:10], start=1):
-        text += (
-            f"{i}. {name}\n"
-            f"   ⚡ Aura: {aura} | 👥 Followers: {followers}\n"
-            f"   ⭐ Score: {score}\n\n"
-        )
-
-    await message.answer(text)
-
-# ===================== CONFESSION FLOW =====================
-
-@dp.message(F.text & ~F.text.startswith("/"))
+@dp.message(
+    F.text
+    & ~F.text.startswith("🧑")
+    & ~F.text.startswith("✍️")
+)
 async def confession_handler(message: Message):
-    get_profile(message.from_user.id, message.from_user.first_name)
-
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ Approve", callback_data=f"approve:{message.from_user.id}:{message.message_id}"),
+                InlineKeyboardButton(text="✅ Approve", callback_data=f"approve:{message.from_user.id}"),
                 InlineKeyboardButton(text="❌ Reject", callback_data="reject"),
             ]
         ]
@@ -139,40 +119,44 @@ async def confession_handler(message: Message):
 
     await bot.send_message(
         ADMIN_CHANNEL_ID,
-        f"📩 New Confession:\n\n{message.text}",
+        f"📩 New Confession\n\n{message.text}",
         reply_markup=keyboard
     )
 
-    await message.answer("✅ Your confession was sent for review.")
-
-# ===================== ADMIN ACTIONS =====================
+    await message.answer(
+        "✅ Your confession was sent for review.",
+        reply_markup=main_menu()
+    )
 
 @dp.callback_query(F.data.startswith("approve"))
 async def approve_confession(callback: CallbackQuery):
-    _, user_id, _ = callback.data.split(":")
-    text = callback.message.text.replace("📩 New Confession:\n\n", "")
-
+    user_id = callback.data.split(":")[1]
+    text = callback.message.text.replace("📩 New Confession\n\n", "")
     confession_number = increase_counter()
-    increase_aura(user_id)
 
     await bot.send_message(
         PUBLIC_CHANNEL_ID,
         f"📝 Anonymous Confession #{confession_number}\n\n{text}"
     )
 
+    profiles = load_profiles()
+    if user_id in profiles:
+        profiles[user_id]["aura"] += 1
+        save_profiles(profiles)
+
     await callback.message.edit_text(
         callback.message.text + f"\n\n✅ Approved as Confession #{confession_number}"
     )
-
     await callback.answer("Posted")
 
 @dp.callback_query(F.data == "reject")
 async def reject_confession(callback: CallbackQuery):
-    await callback.message.edit_text(callback.message.text + "\n\n❌ Rejected")
+    await callback.message.edit_text(
+        callback.message.text + "\n\n❌ Rejected"
+    )
     await callback.answer("Rejected")
 
-# ===================== RUN =====================
-
+# ================= START =================
 async def main():
     await dp.start_polling(bot)
 
